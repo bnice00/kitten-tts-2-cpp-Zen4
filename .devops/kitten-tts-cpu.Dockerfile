@@ -58,7 +58,7 @@ RUN python3 -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 RUN pip install --no-cache-dir torch==${TORCH_VERSION} --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir numpy==2.5.4 soundfile==0.14.0 certifi \
-        fastapi==0.162.0 uvicorn==0.54.0 pydantic==2.14.1
+        fastapi==0.162.0 uvicorn==0.54.0 pydantic==2.14.1 python-multipart==0.0.32
 
 COPY --from=build /wheels /wheels
 RUN pip install --no-cache-dir --no-deps /wheels/*.whl && rm -rf /wheels
