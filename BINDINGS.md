@@ -250,7 +250,42 @@ cmake ... -DGGML_NATIVE=OFF
 
 (`-march=znver4` for the non-ggml code is optional; the speed comes from ggml's kernels. It also makes the whole `.so` Zen 4-only, so leave it out if unsure.) `_build_info.json` records `ggml_native` and `cxx_flags`, so you can check what an image was built with. ggml's `GGML_CPU_ALL_VARIANTS` (one binary that picks the best kernels at runtime) needs `GGML_BACKEND_DL` and shared libraries, so it does not fit this static single-`.so` build.
 
-## 6. Notes for a Docker image
+## 6. Docker image
+
+`.devops/kitten-tts-cpu.Dockerfile` builds the server image in two stages: a build stage (compilers, `python3-devel`) that produces a wheel, and a small runtime stage (Python, CPU torch, the wheel, the server code). Both use `fedora:42`, the same base as the toolbox, because the `.so` is tied to that Python version (3.13) and those system libraries. The patched KittenTTS checkout comes in as a second build context, so only the `kittenml/` folder is copied and its heavy dependencies are never installed.
+
+Build and run from the Bazzite host (podman is not available inside the toolbox), in the repo root:
+
+```sh
+git submodule update --init vendor/kitten-text-processing   # once
+podman build -f .devops/kitten-tts-cpu.Dockerfile \
+  --build-context kittenml=$HOME/patchedkitten/KittenTTS \
+  --build-arg KITTEN_CPU=native -t kitten-tts-cpu .
+mkdir -p ~/.cache/kitten-tts-docker
+podman run -d --name kitten-cpu -p 8001:8001 \
+  -v ~/.cache/kitten-tts-docker:/cache:z kitten-tts-cpu
+```
+
+- `KITTEN_CPU`: `native` (this CPU), `znver4` (any Zen 4 or newer), or `avx2` (portable). See section 5.
+- The `/cache` volume keeps downloaded models (`/cache/kitten-tts`) and saved voices (`/cache/voices`). `:z` is needed on Fedora/Bazzite so SELinux allows the container to use the folder.
+- Port 8001 keeps it apart from the ROCm server on 8000.
+- Server settings are env vars, overridable with `podman run -e`: `KITTENML_THREADS=6`, `KITTENML_DECODER=student_w4`, `KITTENML_DECODER_THREADS=4`. The last two come from a small `server.py` change in the patched KittenTTS checkout; unset, they keep the old behavior.
+
+Check it:
+
+```sh
+podman exec kitten-cpu python -c "import kitten_tts_cpp,pathlib; print(pathlib.Path(kitten_tts_cpp.__file__).with_name('_build_info.json').read_text())"
+podman exec kitten-cpu sh -c 'ldd "$(python -c "import kitten_tts_cpp._native as n; print(n.__file__)")" | grep -E "not found|cuda" || echo ok'
+curl localhost:8001/health
+curl -s -o full.wav -w "%{http_code} %{time_total}s\n" localhost:8001/v1/audio/speech -H 'Content-Type: application/json' \
+  -d '{"input":"One day, a little girl named Lily found a needle in her room.","voice":"Bruno","response_format":"wav","stream":false}'
+```
+
+Expect `200` and about 5.4 s for about 5 s of audio (what the same server gave in the toolbox, wall RTF 1.07). Much slower usually means the container got fewer CPUs; check `podman run --cpus` / `--cpuset-cpus`.
+
+The first start downloads about 1.3 GB (982 MB GGUF, 298 MB decoder, 40 MB voices) before `/health` answers. To skip that, copy your existing `~/.cache/kitten-tts` into `~/.cache/kitten-tts-docker/kitten-tts` before the first run.
+
+## 7. Notes for a Docker image
 
 - **Torch**: install exactly `torch==2.14.1` from `https://download.pytorch.org/whl/cpu` before `pip install`ing this package (or rebuild against whatever torch the image has). The upstream Dockerfile installs a ROCm torch; the cpp backend does not need it.
 - **Build deps** in the build stage: gcc/g++ with C++20, cmake, `python3-devel`, `openssl-devel`, `pip install pybind11`. **Runtime deps**: `libgomp` (comes with torch), `libssl.so.3`/`libcrypto.so.3` (OpenSSL 3, from the system; used only to download models from Hugging Face), numpy, soundfile (needs `libsndfile`), certifi.
