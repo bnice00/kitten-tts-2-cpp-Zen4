@@ -18,6 +18,29 @@ else()
 endif()
 target_compile_definitions(kitten-tts PRIVATE KITTEN_DEFAULT_DATA="${kitten_data}")
 
+option(KITTEN_TTS_BUILD_PYTHON "Build the kitten_tts_cpp Python module (needs pybind11)" OFF)
+if(KITTEN_TTS_BUILD_PYTHON)
+    if(BUILD_SHARED_LIBS OR NOT CMAKE_POSITION_INDEPENDENT_CODE)
+        message(WARNING "KITTEN_TTS_BUILD_PYTHON: use -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON so _native has no libllama/libggml runtime dependencies")
+    endif()
+    find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
+    find_package(pybind11 CONFIG REQUIRED)
+    # the package is staged in the build tree: pip install <build>/tools/kitten-tts/python
+    set(kitten_py "${CMAKE_CURRENT_BINARY_DIR}/python")
+    pybind11_add_module(_native MODULE python/native.cpp engine.cpp assets.cpp)
+    target_include_directories(_native PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/vendor/nlohmann)
+    target_link_libraries(_native PRIVATE llama-common llama kitten-text kitten-decoder)
+    set_target_properties(_native PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${kitten_py}/kitten_tts_cpp")
+    foreach(file pyproject.toml kitten_tts_cpp/__init__.py kitten_tts_cpp/model.py)
+        configure_file(python/${file} "${kitten_py}/${file}" COPYONLY)
+    endforeach()
+    # model.py refuses to import when the running torch differs from this version
+    file(WRITE "${kitten_py}/kitten_tts_cpp/_build_info.json"
+        "{\n  \"torch_version\": \"${Torch_VERSION}\",\n  \"portable\": false,\n  \"ggml_native\": \"${GGML_NATIVE}\",\n  \"cxx_flags\": \"${CMAKE_CXX_FLAGS}\"\n}\n")
+    add_custom_command(TARGET _native POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${kitten_data}" "${kitten_py}/kitten_tts_cpp/data")
+endif()
+
 set(KITTEN_REFERENCE_PACKAGE "" CACHE PATH "KittenTTS Python checkout for differential tests")
 set(KITTEN_TEST_PYTHON "python3" CACHE FILEPATH "Python with KittenTTS2 conversion dependencies")
 if(BUILD_TESTING AND KITTEN_REFERENCE_PACKAGE)
