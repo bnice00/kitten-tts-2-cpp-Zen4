@@ -1,0 +1,19 @@
+# Staged into <build>/tools/kitten-tts/python by CMake (KITTEN_TTS_BUILD_PYTHON=ON); install from there.
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kitten-tts-cpp"
+version = "0.2.0+native"
+description = "KittenTTS2 CPU runtime, built from source for this machine"
+requires-python = ">=3.10"
+license = "MIT"
+# torch is not listed on purpose: pip would pull the CUDA wheel from PyPI. Install the matching CPU torch first.
+dependencies = ["numpy>=1.26", "soundfile>=0.12", "certifi>=2024.7.4"]
+
+[tool.setuptools]
+packages = ["kitten_tts_cpp"]
+
+[tool.setuptools.package-data]
+kitten_tts_cpp = ["_native*.so", "_build_info.json", "data/.ready", "data/*/*"]
